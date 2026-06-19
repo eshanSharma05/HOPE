@@ -7,7 +7,7 @@ import time
 
 # --- CONFIGURATION ---
 # Replace with your DVR RTSP URL. Use 0 for local webcam testing.
-RTSP_URL = "rtsp://admin:HarshDeepa@6104@192.168.1.100:554/cam/realmonitor?channel=1&subtype=1"
+RTSP_URL = "rtsp://admin:HarshDeepa\@6104@192.168.1.100:554/cam/realmonitor?channel=1&subtype=1"
 
 # --- BACKEND: MODEL INITIALIZATION ---
 @st.cache_resource
