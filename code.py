@@ -4,6 +4,7 @@ from ultralytics import YOLO
 import pandas as pd
 from datetime import datetime
 import time
+import os
 
 # --- CONFIGURATION ---
 # Replace with your DVR RTSP URL. Use 0 for local webcam testing.
@@ -53,8 +54,10 @@ with col2:
 
 # --- CORE PROCESSING LOOP ---
 if st.session_state.running:
+    
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
     # Initialize DVR Stream
-    cap = cv2.VideoCapture(RTSP_URL)
+    cap = cv2.VideoCapture(RTSP_URL,cv2.CAP_FFMPEG)
     
     if not cap.isOpened():
         st.error("Error: Could not connect to the video stream. Please check your RTSP URL/Camera index.")
