@@ -55,9 +55,22 @@ with col2:
 # --- CORE PROCESSING LOOP ---
 if st.session_state.running:
     
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+    if "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ:
+        del os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
+    
+    # 2. Build a GStreamer pipeline string for OpenCV
+    # This instructs the OS backend to handle the network connection instead of OpenCV
+    gstreamer_pipeline = (
+        f"rtspsrc location={RTSP_URL} latency=100 ! "
+        f"rtph264depay ! h264parse ! avdec_h264 ! "
+        f"videoconvert ! appsink drop=true"
+    )
+    
+    # 3. Open the capture session using GStreamer explicitly
+    cap = cv2.VideoCapture(gstreamer_pipeline, cv2.CAP_GSTREAMER)
     # Initialize DVR Stream
-    cap = cv2.VideoCapture(RTSP_URL,cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(RTSP_URL)
     
     if not cap.isOpened():
         st.error("Error: Could not connect to the video stream. Please check your RTSP URL/Camera index.")
