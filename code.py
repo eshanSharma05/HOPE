@@ -8,30 +8,55 @@ import numpy as np
 import time
 
 # --- CONFIGURATION ---
-# Your verified dynamic Ngrok development domain path
+# Ensure this matches your active Ngrok URL exactly
 HTTP_STREAM_URL = "https://bulk-boxer-handiness.ngrok-free.dev/video"
 
 @st.cache_resource
 def load_model():
+    # Using YOLOv8 nano for real-time cloud inference speed
     return YOLO("yolov8n.pt")
 
 model = load_model()
 
-st.set_page_config(page_title="Live Camera Analysis", layout="wide")
-st.title("📹 Deployed Live Video Analysis Dashboard")
+# Full list of common COCO dataset classes for selection
+AVAILABLE_CLASSES = {
+    "Person (Human)": 0,
+    "Bicycle": 1,
+    "Car": 2,
+    "Motorcycle": 3,
+    "Backpack": 24,
+    "Umbrella": 25,
+    "Handbag": 26,
+    "Laptop": 63,
+    "Cell Phone": 67
+}
+
+st.set_page_config(page_title="Object & Human Detection Dashboard", layout="wide")
+st.title("📹 Live Object & Human Detection Dashboard")
 
 if "running" not in st.session_state:
     st.session_state.running = False
 if "log_data" not in st.session_state:
     st.session_state.log_data = []
 
-# Controls
-st.sidebar.header("Controls")
-if st.sidebar.button("▶️ Start Stream"):
+# --- SIDEBAR CONTROLS ---
+st.sidebar.header("Tracking Settings")
+selected_labels = st.sidebar.multiselect(
+    "Select Objects to Detect:",
+    options=list(AVAILABLE_CLASSES.keys()),
+    default=["Person (Human)"]
+)
+
+# Map selected string labels to their respective YOLO integer class IDs
+selected_class_ids = [AVAILABLE_CLASSES[label] for label in selected_labels]
+
+st.sidebar.markdown("---")
+if st.sidebar.button("▶️ Start Stream", use_container_width=True):
     st.session_state.running = True
-if st.sidebar.button("⏹️ Stop Stream"):
+if st.sidebar.button("⏹️ Stop Stream", use_container_width=True):
     st.session_state.running = False
 
+# Layout Structure
 col1, col2 = st.columns([2, 1])
 with col1:
     frame_placeholder = st.empty()
@@ -39,18 +64,14 @@ with col2:
     metric_placeholder = st.empty()
     table_placeholder = st.empty()
 
-# --- BOUNDARY-SAFE HTTP FRAME PROCESSING ---
-if st.session_state.running:
+# --- PROCESSING LOOP ---
+if st.session_state.running and selected_class_ids:
     try:
-        # Open a direct web stream pipeline to your local Ngrok tunnel
-        stream = urllib.request.urlopen(HTTP_STREAM_URL, timeout=10)
+        stream = urllib.request.urlopen(HTTP_STREAM_URL, timeout=30)
         bytes_buffer = bytes()
         
         while st.session_state.running:
-            # Read chunks of image data from the stream payload
             bytes_buffer += stream.read(1024 * 8)
-            
-            # Look for standard JPEG start (0xffd8) and end (0xffd9) markers
             a = bytes_buffer.find(b'\xff\xd8')
             b = bytes_buffer.find(b'\xff\xd9')
             
@@ -58,38 +79,60 @@ if st.session_state.running:
                 jpg_bytes = bytes_buffer[a:b+2]
                 bytes_buffer = bytes_buffer[b+2:]
                 
-                # Turn raw image bytes straight into a frame OpenCV can draw on
                 frame = cv2.imdecode(np.frombuffer(jpg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-                
                 if frame is None:
                     continue
                 
-                # ML Inference Engine
-                results = model(frame, verbose=False, classes=0)
-                human_count = len(results[0].boxes) if results else 0
-
+                # Run YOLO inference filtering strictly by the selected UI classes
+                results = model(frame, verbose=False, classes=selected_class_ids)
+                
+                human_count = 0
+                total_objects = 0
+                
                 for result in results:
-                    for box in result.boxes:
+                    boxes = result.boxes
+                    total_objects = len(boxes)
+                    
+                    for box in boxes:
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        cls_id = int(box.cls[0])
+                        conf = float(box.conf[0])
+                        
+                        # Increment specific human counter if the class ID is 0
+                        if cls_id == 0:
+                            human_count += 1
+                        
+                        # Fetch the text label name from the model dictionary
+                        label_name = model.names[cls_id].upper()
+                        
+                        # Draw dynamic bounding boxes and labels
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(frame, f"{label_name} {conf:.2f}", (x1, y1 - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-                # Dashboard Rendering Matrix
+                # Render output to Streamlit Web Dashboard
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame_placeholder.image(frame_rgb, channels="RGB", use_column_width=True)
                 
                 current_time = datetime.now().strftime("%H:%M:%S")
-                metric_placeholder.metric(label="Humans Detected", value=human_count)
+                metric_placeholder.metric(label="Humans Tracked", value=human_count)
 
-                if human_count > 0:
-                    st.session_state.log_data.insert(0, {"Timestamp": current_time, "Count": human_count})
+                # Keep a running log if any monitored objects are present
+                if total_objects > 0:
+                    st.session_state.log_data.insert(0, {
+                        "Timestamp": current_time, 
+                        "Humans Present": human_count,
+                        "Total Target Objects": total_objects
+                    })
                     st.session_state.log_data = st.session_state.log_data[:50]
                     table_placeholder.dataframe(pd.DataFrame(st.session_state.log_data), use_container_width=True)
                 
-                # Control frame loop pacing
                 time.sleep(0.01)
                 
     except Exception as e:
         st.error(f"Cloud Connection Timeout or Reset: {e}")
         st.session_state.running = False
+elif not selected_class_ids:
+    frame_placeholder.warning("Please select at least one target class object from the sidebar selection box.")
 else:
-    frame_placeholder.info("Stream offline. Press 'Start Stream' to connect.")
+    frame_placeholder.info("Stream offline. Click 'Start Stream' to engage.")
