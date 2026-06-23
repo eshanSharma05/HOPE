@@ -7,9 +7,24 @@ import urllib.request
 import numpy as np
 import time
 
+# --- CONFIGURATION FOR WHITELISTED ROUTER ACCESS ---
+# 1. Provide the building's Public WAN IP address
+# BUILDING_PUBLIC_IP = "122.160.x.x" 
+
+# 2. Provide the external port forwarded on the router (e.g., 8085)
+#FORWARDED_PORT = "8085" 
+
+#USERNAME = "admin"
+#PASSWORD = "your_dahua_password"
+#CHANNEL = "4"
+
+# Direct API snapshot endpoint string
+#HTTP_STREAM_URL = f"http://{BUILDING_PUBLIC_IP}:{FORWARDED_PORT}/cgi-bin/snapshot.cgi?channel={CHANNEL}"
+
+
 # --- CONFIGURATION ---
 # Ensure this matches your active Ngrok URL exactly
-HTTP_STREAM_URL = "http://hope123.ddns.net:8085/cgi-bin/snapshot.cgi?channel=4"
+HTTP_STREAM_URL = "https://bulk-boxer-handiness.ngrok-free.dev/video"
 
 @st.cache_resource
 def load_model():
