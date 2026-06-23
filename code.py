@@ -9,7 +9,7 @@ import time
 
 # --- CONFIGURATION ---
 # Ensure this matches your active Ngrok URL exactly
-HTTP_STREAM_URL = "https://bulk-boxer-handiness.ngrok-free.dev/video"
+HTTP_STREAM_URL = "http://hope123.ddns.net:8085/cgi-bin/snapshot.cgi?channel=4"
 
 @st.cache_resource
 def load_model():
