@@ -14,7 +14,7 @@ CAMERA_CONFIG = {
     "Channel3": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=3",
     "Channel4": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=4"
 }
-VIDEO_DURATION_SECS = 10
+VIDEO_DURATION_SECS = 10  # Cut exactly 10-second videos
 GAP_DURATION_SECS = 30    # Wait 30 seconds before cutting the next video
 DB_FILE = "surveillance_vault.db"
 
@@ -37,14 +37,16 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- GLOBAL THREAD SIGNAL CONTROL ---
-# Use a global native Python Event instead of Streamlit Session State for the threads
+# Global Native Python Event for Thread Signaling
 if "stop_signal" not in st.session_state:
     st.session_state.stop_signal = threading.Event()
 
-# --- HEADLESS BACKGROUND RECORDER THREAD ---
+# --- BACKGROUND RECORDER & VISUAL LABELER WORKER ---
 def record_camera_worker(cam_name, rtsp_url, stop_event):
-    """Headless background loop that records for 10s, then sleeps for 30s."""
+    """Headless loop that captures video, draws YOLO annotations, saves data, then sleeps."""
+    # Load an isolated model instance inside the thread to prevent cross-thread memory corruption
+    thread_model = YOLO("yolov8n.pt")
+    
     while not stop_event.is_set():
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
@@ -66,8 +68,11 @@ def record_camera_worker(cam_name, rtsp_url, stop_event):
             out = cv2.VideoWriter(temp_filepath, fourcc, fps, (frame_width, frame_height))
             start_time = time.time()
             
-            # Loop 1: Record actively for 10 seconds
+            max_humans = 0
+            max_total_objects = 0
             ret = True
+            
+            # --- Active 10-Second Recording & Inference Phase ---
             while (time.time() - start_time) < VIDEO_DURATION_SECS:
                 if stop_event.is_set():
                     ret = False
@@ -75,11 +80,48 @@ def record_camera_worker(cam_name, rtsp_url, stop_event):
                 ret, frame = cap.read()
                 if not ret:
                     break
+                
+                # Run YOLO Object Inference on the frame matrix
+                results = thread_model(frame, verbose=False)
+                
+                if results and len(results[0].boxes) > 0:
+                    boxes = results[0].boxes
+                    total_objs = len(boxes)
+                    class_ids = boxes.cls.cpu().numpy()
+                    human_objs = int((class_ids == 0).sum())
+                    
+                    # Track peak counts found within this 10s video block
+                    if human_objs > max_humans:
+                        max_humans = human_objs
+                    if total_objs > max_total_objects:
+                        max_total_objects = total_objs
+                    
+                    # --- Render Bounding Boxes & Text Overlays ---
+                    for box in boxes:
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        cls_id = int(box.cls[0])
+                        conf = float(box.conf[0])
+                        label_name = thread_model.names[cls_id]
+                        
+                        # Set color: Neon green for humans, neon blue for other objects
+                        color = (0, 255, 0) if cls_id == 0 else (255, 255, 0)
+                        
+                        # Draw bounding box rectangle
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                        
+                        # Construct label banner text (e.g., "person: 84%")
+                        caption = f"{label_name}: {int(conf * 100)}%"
+                        
+                        # Draw background banner text rectangle for clarity
+                        cv2.rectangle(frame, (x1, y1 - 20), (x1 + len(caption) * 10, y1), color, -1)
+                        cv2.putText(frame, caption, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+                
+                # Write the annotated frame directly to the video container
                 out.write(frame)
                 
             out.release()
             
-            # Commit the 10-second clip to the SQLite database
+            # Save the processed video chunk to the SQLite database
             if ret and os.path.exists(temp_filepath):
                 with open(temp_filepath, "rb") as f:
                     blob_data = f.read()
@@ -87,10 +129,11 @@ def record_camera_worker(cam_name, rtsp_url, stop_event):
                 try:
                     conn = sqlite3.connect(DB_FILE)
                     cursor = conn.cursor()
+                    # Directly store data with processed metrics calculated during recording
                     cursor.execute('''
-                        INSERT INTO video_chunks (filename, camera_id, timestamp, video_blob)
-                        VALUES (?, ?, ?, ?)
-                    ''', (filename, cam_name, timestamp_str, blob_data))
+                        INSERT INTO video_chunks (filename, camera_id, timestamp, video_blob, processed, humans, objects)
+                        VALUES (?, ?, ?, ?, 1, ?, ?)
+                    ''', (filename, cam_name, timestamp_str, blob_data, max_humans, max_total_objects))
                     conn.commit()
                     conn.close()
                 except sqlite3.OperationalError:
@@ -102,7 +145,7 @@ def record_camera_worker(cam_name, rtsp_url, stop_event):
             if not ret:
                 break
                 
-            # Loop 2: Idle countdown gap. Check stop_event every second to keep the STOP button responsive.
+            # --- 30-Second Passive Idle Phase ---
             gap_start = time.time()
             while (time.time() - gap_start) < GAP_DURATION_SECS:
                 if stop_event.is_set():
@@ -111,63 +154,17 @@ def record_camera_worker(cam_name, rtsp_url, stop_event):
                 
         cap.release()
         time.sleep(1)
-# --- YOLO DETECTION INFERENCE PASS ---
-def process_stored_blobs(model):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, filename, video_blob FROM video_chunks WHERE processed = 0")
-    unprocessed_jobs = cursor.fetchall()
-    conn.close()
-    
-    for job_id, filename, video_blob in unprocessed_jobs:
-        temp_file = f"process_target_{filename}"
-        with open(temp_file, "wb") as f:
-            f.write(video_blob)
-            
-        cap = cv2.VideoCapture(temp_file)
-        max_humans = 0
-        max_total_objects = 0
-        
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-                
-            results = model(frame, verbose=False)
-            if results and len(results[0].boxes) > 0:
-                boxes = results[0].boxes
-                total_objs = len(boxes)
-                class_ids = boxes.cls.cpu().numpy()
-                human_objs = int((class_ids == 0).sum())
-                
-                if human_objs > max_humans:
-                    max_humans = human_objs
-                if total_objs > max_total_objects:
-                    max_total_objects = total_objs
-                    
-        cap.release()
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-            
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE video_chunks SET processed = 1, humans = ?, objects = ? WHERE id = ?
-        ''', (max_humans, max_total_objects, job_id))
-        conn.commit()
-        conn.close()
 
 # --- DASHBOARD LAYOUT & INITIALIZATION ---
 st.set_page_config(page_title="Dynamic Surveillance Fleet Dashboard", layout="wide")
 st.title("🛡️ Automated Multi-Camera Analytics Fleet Dashboard")
 
 init_db()
-model = YOLO("yolov8n.pt")
 
 if "pipeline_running" not in st.session_state:
     st.session_state.pipeline_running = False
 
-# --- DOWNLOAD LOGIC ENGINE ---
+# --- DOWNLOAD PARAMETERS INTERCEPTOR ---
 query_params = st.query_params
 if "download_id" in query_params:
     target_id = query_params["download_id"]
@@ -193,17 +190,14 @@ st.sidebar.header("Pipeline Controls")
 if st.session_state.pipeline_running:
     if st.sidebar.button("⏹️ Stop Stream & Processing", type="primary"):
         st.session_state.pipeline_running = False
-        # Set the signal to force all background threads to exit cleanly
         st.session_state.stop_signal.set()
         st.rerun()
 else:
     if st.sidebar.button("▶️ Start Stream & Processing", type="secondary"):
         st.session_state.pipeline_running = True
-        # Clear the signal so threads can run freely
         st.session_state.stop_signal.clear()
         
         for camera_id, stream_path in CAMERA_CONFIG.items():
-            # Pass the native Python event object directly into the thread parameters
             t = threading.Thread(
                 target=record_camera_worker, 
                 args=(camera_id, stream_path, st.session_state.stop_signal), 
@@ -215,7 +209,6 @@ else:
 status_placeholder = st.sidebar.empty()
 if st.session_state.pipeline_running:
     status_placeholder.success("🟢 System Active: Processing Logs...")
-    process_stored_blobs(model)
 else:
     status_placeholder.error("🔴 System Offline.")
 
@@ -256,7 +249,7 @@ if os.path.exists(DB_FILE):
             disabled=True
         )
     else:
-        st.info("Awaiting clip segments. Records will appear once the first 40-second block closes.")
+        st.info("Awaiting clip segments. Records will appear once the first 10-second block closes.")
 else:
     st.info("Database initializing.")
 
