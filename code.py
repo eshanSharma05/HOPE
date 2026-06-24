@@ -15,6 +15,7 @@ CAMERA_CONFIG = {
     "Channel4": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=4"
 }
 VIDEO_DURATION_SECS = 10
+GAP_DURATION_SECS = 30    # Wait 30 seconds before cutting the next video
 DB_FILE = "surveillance_vault.db"
 
 # Initialize SQLite database schema
@@ -43,8 +44,7 @@ if "stop_signal" not in st.session_state:
 
 # --- HEADLESS BACKGROUND RECORDER THREAD ---
 def record_camera_worker(cam_name, rtsp_url, stop_event):
-    """Headless background loop that monitors native Python stop events."""
-    # .is_set() checks if the stop signal has been triggered
+    """Headless background loop that records for 10s, then sleeps for 30s."""
     while not stop_event.is_set():
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
@@ -66,6 +66,7 @@ def record_camera_worker(cam_name, rtsp_url, stop_event):
             out = cv2.VideoWriter(temp_filepath, fourcc, fps, (frame_width, frame_height))
             start_time = time.time()
             
+            # Loop 1: Record actively for 10 seconds
             ret = True
             while (time.time() - start_time) < VIDEO_DURATION_SECS:
                 if stop_event.is_set():
@@ -78,6 +79,7 @@ def record_camera_worker(cam_name, rtsp_url, stop_event):
                 
             out.release()
             
+            # Commit the 10-second clip to the SQLite database
             if ret and os.path.exists(temp_filepath):
                 with open(temp_filepath, "rb") as f:
                     blob_data = f.read()
@@ -96,13 +98,19 @@ def record_camera_worker(cam_name, rtsp_url, stop_event):
                 
                 if os.path.exists(temp_filepath):
                     os.remove(temp_filepath)
-                    
+            
             if not ret:
                 break
                 
+            # Loop 2: Idle countdown gap. Check stop_event every second to keep the STOP button responsive.
+            gap_start = time.time()
+            while (time.time() - gap_start) < GAP_DURATION_SECS:
+                if stop_event.is_set():
+                    break
+                time.sleep(1)
+                
         cap.release()
         time.sleep(1)
-
 # --- YOLO DETECTION INFERENCE PASS ---
 def process_stored_blobs(model):
     conn = sqlite3.connect(DB_FILE)
