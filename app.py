@@ -11,8 +11,8 @@ from datetime import datetime
 
 # --- CONFIGURATION ENGINE ---
 CAMERA_CONFIG = {
-    "Channel1": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=3",
-    "Channel2": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=4"
+    "Channel3": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=3",
+    "Channel4": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=4"
 }
 VIDEO_DURATION_SECS = 40
 DB_FILE = "surveillance_vault.db"
