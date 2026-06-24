@@ -12,22 +12,7 @@ from datetime import datetime
 # --- UPDATED INTERNAL CONTEXT ATTACHERS ---
 # Pulling directly from the updated module location
 # --- BULLETPROOF CONTEXT IMPORT ENGINE ---
-try:
-    # Try the standard modern placement path
-    from streamlit.runtime.scriptrunner import add_script_run_context
-except ImportError:
-    try:
-        # Try the newer consolidated utilities module path
-        from streamlit.runtime.scriptrunner_utils.script_run_context import add_script_run_context
-    except ImportError:
-        try:
-            # Try the legacy legacy path mapping fallback
-            from streamlit.runtime.scriptrunner.script_run_context import add_script_run_context
-        except ImportError:
-            # Ultimate safety fallback if Streamlit completely structuralizes execution contexts differently
-            def add_script_run_context(thread, ctx=None):
-                if ctx:
-                    thread._streamlit_script_run_ctx = ctx
+from streamlit.runtime.scriptrunner import get_script_run_context
 
 # --- CONFIGURATION ENGINE ---
 CAMERA_CONFIG = {
@@ -163,16 +148,6 @@ def process_stored_blobs(model):
         conn.close()
 
 # --- DASHBOARD LAYOUT & INITIALIZATION ---
-st.set_page_config(page_title="Dynamic Surveillance Fleet Dashboard", layout="wide")
-st.title("🛡️ Automated Multi-Camera Analytics Fleet Dashboard")
-
-init_db()
-model = YOLO("yolov8n.pt")
-
-if "pipeline_running" not in st.session_state:
-    st.session_state.pipeline_running = False
-
-# --- INTERACTIVE CONTROL BUTTONS ---
 st.sidebar.header("Pipeline Controls")
 if st.session_state.pipeline_running:
     if st.sidebar.button("⏹️ Stop Stream & Processing", type="primary"):
@@ -182,14 +157,13 @@ else:
     if st.sidebar.button("▶️ Start Stream & Processing", type="secondary"):
         st.session_state.pipeline_running = True
         
-        # 1. Grab the current active browser session context
-        ctx = threading.current_thread()._streamlit_script_run_ctx
+        # 1. Fetch the official active context wrapper from the runtime engine
+        ctx = get_script_run_context()
         
         for camera_id, stream_path in CAMERA_CONFIG.items():
-            # 2. Create the background thread
             t = threading.Thread(target=record_camera_worker, args=(camera_id, stream_path), daemon=True)
             
-            # 3. Explicitly attach the context to the thread before starting it
+            # 2. Seamlessly register the thread into Streamlit's tracking pool
             if ctx is not None:
                 add_script_run_context(t, ctx)
                 
