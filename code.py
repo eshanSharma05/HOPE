@@ -9,11 +9,6 @@ import time
 import threading
 from datetime import datetime
 
-# --- UPDATED INTERNAL CONTEXT ATTACHERS ---
-# Pulling directly from the updated module location
-# --- BULLETPROOF CONTEXT IMPORT ENGINE ---
-from streamlit.runtime.scriptrunner import get_script_run_context
-
 # --- CONFIGURATION ENGINE ---
 CAMERA_CONFIG = {
     "Channel3": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=3",
@@ -41,9 +36,16 @@ def init_db():
     conn.commit()
     conn.close()
 
+# --- GLOBAL THREAD SIGNAL CONTROL ---
+# Use a global native Python Event instead of Streamlit Session State for the threads
+if "stop_signal" not in st.session_state:
+    st.session_state.stop_signal = threading.Event()
+
 # --- HEADLESS BACKGROUND RECORDER THREAD ---
-def record_camera_worker(cam_name, rtsp_url):
-    while st.session_state.get("pipeline_running", False):
+def record_camera_worker(cam_name, rtsp_url, stop_event):
+    """Headless background loop that monitors native Python stop events."""
+    # .is_set() checks if the stop signal has been triggered
+    while not stop_event.is_set():
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         
@@ -56,7 +58,7 @@ def record_camera_worker(cam_name, rtsp_url):
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) if cap.get(cv2.CAP_PROP_FRAME_HEIGHT) > 0 else 480
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         
-        while cap.isOpened() and st.session_state.get("pipeline_running", False):
+        while cap.isOpened() and not stop_event.is_set():
             timestamp_str = datetime.now().strftime("%d%m%y_%H%M%S")
             filename = f"{cam_name}_{timestamp_str}.mp4"
             temp_filepath = f"temp_{filename}"
@@ -66,7 +68,7 @@ def record_camera_worker(cam_name, rtsp_url):
             
             ret = True
             while (time.time() - start_time) < VIDEO_DURATION_SECS:
-                if not st.session_state.get("pipeline_running", False):
+                if stop_event.is_set():
                     ret = False
                     break
                 ret, frame = cap.read()
@@ -148,34 +150,72 @@ def process_stored_blobs(model):
         conn.close()
 
 # --- DASHBOARD LAYOUT & INITIALIZATION ---
+st.set_page_config(page_title="Dynamic Surveillance Fleet Dashboard", layout="wide")
+st.title("🛡️ Automated Multi-Camera Analytics Fleet Dashboard")
+
+init_db()
+model = YOLO("yolov8n.pt")
+
+if "pipeline_running" not in st.session_state:
+    st.session_state.pipeline_running = False
+
+# --- DOWNLOAD LOGIC ENGINE ---
+query_params = st.query_params
+if "download_id" in query_params:
+    target_id = query_params["download_id"]
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT filename, video_blob FROM video_chunks WHERE id = ?", (target_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        filename, blob_data = row
+        st.download_button(
+            label=f"💾 Click to Confirm Download: {filename}",
+            data=blob_data,
+            file_name=filename,
+            mime="video/mp4",
+            type="primary"
+        )
+        st.stop()
+
+# --- INTERACTIVE CONTROL BUTTONS ---
 st.sidebar.header("Pipeline Controls")
 if st.session_state.pipeline_running:
     if st.sidebar.button("⏹️ Stop Stream & Processing", type="primary"):
         st.session_state.pipeline_running = False
+        # Set the signal to force all background threads to exit cleanly
+        st.session_state.stop_signal.set()
         st.rerun()
 else:
     if st.sidebar.button("▶️ Start Stream & Processing", type="secondary"):
         st.session_state.pipeline_running = True
-        
-        # 1. Fetch the official active context wrapper from the runtime engine
-        ctx = get_script_run_context()
+        # Clear the signal so threads can run freely
+        st.session_state.stop_signal.clear()
         
         for camera_id, stream_path in CAMERA_CONFIG.items():
-            t = threading.Thread(target=record_camera_worker, args=(camera_id, stream_path), daemon=True)
-            
-            # 2. Seamlessly register the thread into Streamlit's tracking pool
-            if ctx is not None:
-                add_script_run_context(t, ctx)
-                
+            # Pass the native Python event object directly into the thread parameters
+            t = threading.Thread(
+                target=record_camera_worker, 
+                args=(camera_id, stream_path, st.session_state.stop_signal), 
+                daemon=True
+            )
             t.start()
         st.rerun()
+
+status_placeholder = st.sidebar.empty()
+if st.session_state.pipeline_running:
+    status_placeholder.success("🟢 System Active: Processing Logs...")
+    process_stored_blobs(model)
+else:
+    status_placeholder.error("🔴 System Offline.")
 
 # --- UI DATA RENDERING MATRIX ---
 st.subheader("📋 Historical Processing Log Registry")
 
 if os.path.exists(DB_FILE):
     conn = sqlite3.connect(DB_FILE)
-    # Pull the database primary 'id' alongside tracking variables
     df = pd.read_sql_query('''
         SELECT id,
                filename AS [Video Name], 
@@ -190,8 +230,28 @@ if os.path.exists(DB_FILE):
     conn.close()
     
     if not df.empty:
-        # Create a dynamic local URL query parameter path for each video row id
         df["Download Link"] = df["id"].apply(lambda x: f"/?download_id={x}")
-        
-        # Remove the raw internal database ID column from displaying on screen
         df = df.drop(columns=["id"])
+        columns_order = ["Download Link", "Video Name", "Camera Origin", "Recording Timestamp", "Number of Humans", "Number of Objects"]
+        df = df[columns_order]
+        
+        st.data_editor(
+            df,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Download Link": st.column_config.LinkColumn(
+                    "Action",
+                    display_text="📥 Download MP4"
+                )
+            },
+            disabled=True
+        )
+    else:
+        st.info("Awaiting clip segments. Records will appear once the first 40-second block closes.")
+else:
+    st.info("Database initializing.")
+
+if st.session_state.pipeline_running:
+    time.sleep(5)
+    st.rerun()
