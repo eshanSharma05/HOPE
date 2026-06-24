@@ -9,9 +9,9 @@ import time
 import threading
 from datetime import datetime
 
-# --- IMPORT THE CONTEXT ATTACHERS ---
-from streamlit.runtime.scriptrunner import add_script_run_context
-from streamlit.runtime import get_instance
+# --- UPDATED INTERNAL CONTEXT ATTACHERS ---
+# Pulling directly from the updated module location
+from streamlit.runtime.scriptrunner_utils.script_run_context import add_script_run_context
 
 # --- CONFIGURATION ENGINE ---
 CAMERA_CONFIG = {
