@@ -11,7 +11,12 @@ from datetime import datetime
 
 # --- UPDATED INTERNAL CONTEXT ATTACHERS ---
 # Pulling directly from the updated module location
-from streamlit.runtime.scriptrunner_utils.script_run_context import add_script_run_context
+from streamlit.runtime.scriptrunner import add_script_run_context
+# If the above fails, use this bulletproof fallback:
+try:
+    from streamlit.runtime.scriptrunner_utils.script_run_context import add_script_run_context
+except ImportError:
+    from streamlit.runtime.scriptrunner import add_script_run_context
 
 # --- CONFIGURATION ENGINE ---
 CAMERA_CONFIG = {
