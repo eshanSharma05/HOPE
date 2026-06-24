@@ -11,12 +11,23 @@ from datetime import datetime
 
 # --- UPDATED INTERNAL CONTEXT ATTACHERS ---
 # Pulling directly from the updated module location
-from streamlit.runtime.scriptrunner import add_script_run_context
-# If the above fails, use this bulletproof fallback:
+# --- BULLETPROOF CONTEXT IMPORT ENGINE ---
 try:
-    from streamlit.runtime.scriptrunner_utils.script_run_context import add_script_run_context
-except ImportError:
+    # Try the standard modern placement path
     from streamlit.runtime.scriptrunner import add_script_run_context
+except ImportError:
+    try:
+        # Try the newer consolidated utilities module path
+        from streamlit.runtime.scriptrunner_utils.script_run_context import add_script_run_context
+    except ImportError:
+        try:
+            # Try the legacy legacy path mapping fallback
+            from streamlit.runtime.scriptrunner.script_run_context import add_script_run_context
+        except ImportError:
+            # Ultimate safety fallback if Streamlit completely structuralizes execution contexts differently
+            def add_script_run_context(thread, ctx=None):
+                if ctx:
+                    thread._streamlit_script_run_ctx = ctx
 
 # --- CONFIGURATION ENGINE ---
 CAMERA_CONFIG = {
