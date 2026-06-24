@@ -34,7 +34,7 @@ CAMERA_CONFIG = {
     "Channel3": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=3",
     "Channel4": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=4"
 }
-VIDEO_DURATION_SECS = 40
+VIDEO_DURATION_SECS = 10
 DB_FILE = "surveillance_vault.db"
 
 # Initialize SQLite database schema
