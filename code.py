@@ -9,6 +9,10 @@ import time
 import threading
 from datetime import datetime
 
+# --- IMPORT THE CONTEXT ATTACHERS ---
+from streamlit.runtime.scriptrunner import add_script_run_context
+from streamlit.runtime import get_instance
+
 # --- CONFIGURATION ENGINE ---
 CAMERA_CONFIG = {
     "Channel3": "http://bulk-boxer-handiness.ngrok-free.dev/video?channel=3",
@@ -152,28 +156,6 @@ model = YOLO("yolov8n.pt")
 if "pipeline_running" not in st.session_state:
     st.session_state.pipeline_running = False
 
-# --- QUERY LAYER FOR DOWNLOADING VIDEOS VIA URL PARAMS ---
-# This hidden engine intercepts specific download link clicks natively inside Streamlit Cloud
-query_params = st.query_params
-if "download_id" in query_params:
-    target_id = query_params["download_id"]
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT filename, video_blob FROM video_chunks WHERE id = ?", (target_id,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if row:
-        filename, blob_data = row
-        st.download_button(
-            label=f"💾 Click to Confirm Download: {filename}",
-            data=blob_data,
-            file_name=filename,
-            mime="video/mp4",
-            type="primary"
-        )
-        st.stop()
-
 # --- INTERACTIVE CONTROL BUTTONS ---
 st.sidebar.header("Pipeline Controls")
 if st.session_state.pipeline_running:
@@ -184,17 +166,19 @@ else:
     if st.sidebar.button("▶️ Start Stream & Processing", type="secondary"):
         st.session_state.pipeline_running = True
         
+        # 1. Grab the current active browser session context
+        ctx = threading.current_thread()._streamlit_script_run_ctx
+        
         for camera_id, stream_path in CAMERA_CONFIG.items():
+            # 2. Create the background thread
             t = threading.Thread(target=record_camera_worker, args=(camera_id, stream_path), daemon=True)
+            
+            # 3. Explicitly attach the context to the thread before starting it
+            if ctx is not None:
+                add_script_run_context(t, ctx)
+                
             t.start()
         st.rerun()
-
-status_placeholder = st.sidebar.empty()
-if st.session_state.pipeline_running:
-    status_placeholder.success("🟢 System Active: Recording & Processing...")
-    process_stored_blobs(model)
-else:
-    status_placeholder.error("🔴 System Offline.")
 
 # --- UI DATA RENDERING MATRIX ---
 st.subheader("📋 Historical Processing Log Registry")
