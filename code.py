@@ -11,7 +11,7 @@ from datetime import datetime
 # --- CONFIGURATION ENGINE ---
 # Maintain the list of camera channels available on your local bridge network
 CHANNELS_LIST = ["Channel 3", "Channel 4"]
-PLAYBACK_BASE_URL = "http://bulk-boxer-handiness.ngrok-free.dev/playback"
+PLAYBACK_BASE_URL = "https://bulk-boxer-handiness.ngrok-free.dev"
 DB_FILE = "surveillance_vault.db"
 
 def init_db():
