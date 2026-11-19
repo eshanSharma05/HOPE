@@ -149,7 +149,7 @@ if st.sidebar.button("🧠 Extract and Process Video", type="primary", use_conta
     playback_url = f"{PLAYBACK_BASE_URL}?channel={channel_num}&start={start_str}&end={end_str}"
     
     with st.spinner(f"Connecting to DVR... Querying Channel {channel_num} Hard Drive Data..."):
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|headers;ngrok-skip-browser-warning: 1"
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|headers;ngrok-skip-browser-warning: 1|stimeout;30000000"
         playback_cap = cv2.VideoCapture(playback_url, cv2.CAP_FFMPEG)
         
         if playback_cap.isOpened():
