@@ -10,7 +10,7 @@ from datetime import datetime
 
 # --- CONFIGURATION ENGINE ---
 # Maintain the list of camera channels available on your local bridge network
-CHANNELS_LIST = ["Channel 3", "Channel 4"]
+CHANNELS_LIST = ["Channel 1", "Channel 2", "Channel 3", "Channel 4"]
 PLAYBACK_BASE_URL = "https://bulk-boxer-handiness.ngrok-free.dev/playback"
 DB_FILE = "surveillance_vault.db"
 
